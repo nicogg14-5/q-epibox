@@ -9,7 +9,7 @@ app.secret_key = "clave_secreta_quepibox_segura"
 # MI_IP_LOCAL = "192.168.0.6"
 
 # Por tu dominio público de Render (ejemplo):
-MI_IP_LOCAL = "qepibox-sistema.onrender.com"
+MI_IP_LOCAL = "https://q-epibox.onrender.com"
 
 # 1. Banco de Casilleros de ENVÍO (4 casillas: 1, 2, 3, 4)
 casilleros_envio = {
@@ -703,8 +703,9 @@ def pantalla_qr():
     if not datos:
         return redirect("/")
 
-    # Cambiar 'http://' a 'https://' para producción en Render:
-    qr_url = f"https://{MI_IP_LOCAL}/movil/pago?order_id={order_id}"
+    # Detecta automáticamente el dominio web actual (Render o red local)
+    qr_url = f"https://{request.host}/movil/pago?order_id={order_id}"
+    
     return render_template_string(HTML_QR_PAGO, 
                                   qr_url=qr_url, 
                                   order_id=order_id, 
