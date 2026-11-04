@@ -5,7 +5,11 @@ import random
 app = Flask(__name__)
 app.secret_key = "clave_secreta_quepibox_segura"
 
-MI_IP_LOCAL = "192.168.0.6"
+# Cambia esto:
+# MI_IP_LOCAL = "192.168.0.6"
+
+# Por tu dominio público de Render (ejemplo):
+MI_IP_LOCAL = "qepibox-sistema.onrender.com"
 
 # 1. Banco de Casilleros de ENVÍO (4 casillas: 1, 2, 3, 4)
 casilleros_envio = {
@@ -699,7 +703,8 @@ def pantalla_qr():
     if not datos:
         return redirect("/")
 
-    qr_url = f"http://{MI_IP_LOCAL}:8080/movil/pago?order_id={order_id}"
+    # Cambiar 'http://' a 'https://' para producción en Render:
+    qr_url = f"https://{MI_IP_LOCAL}/movil/pago?order_id={order_id}"
     return render_template_string(HTML_QR_PAGO, 
                                   qr_url=qr_url, 
                                   order_id=order_id, 
