@@ -1,15 +1,54 @@
 from flask import Flask, render_template_string, request, jsonify, redirect, url_for, session
 import time
 import random
+import snap7
+from snap7.util import set_bit
 
 app = Flask(__name__)
 app.secret_key = "clave_secreta_quepibox_segura"
 
-# Cambia esto:
-# MI_IP_LOCAL = "192.168.0.6"
-
-# Por tu dominio público de Render (ejemplo):
+# Dominio público en Render
 MI_IP_LOCAL = "https://q-epibox.onrender.com"
+
+# Configuración de red del Siemens LOGO! detectado
+LOGO_IP = "192.168.0.3"
+
+def activar_salida_logo(numero_casilla):
+    """
+    Activa una marca de memoria (M) en el LOGO! para disparar 
+    el temporizador y abrir la cerradura de la casilla correspondiente (1 al 8).
+    """
+    try:
+        plc = snap7.client.Client()
+        plc.connect(LOGO_IP, 0, 1)  # Conexión estándar para Siemens LOGO!
+        
+        if plc.get_connected():
+            # Leemos el área de marcas (MK). El byte 0 controla M0.0 hasta M0.7 (Casillas 1 a 8)
+            data = plc.read_area(snap7.types.areas.MK, 0, 0, 1)
+            
+            # Mapea la casilla (1 al 8) al bit correspondiente (0 al 7 del byte 0)
+            bit_index = numero_casilla - 1
+            
+            # 1. Activamos la marca (Pulso ON) para disparar el temporizador T00x del LOGO!
+            set_bit(data, 0, bit_index, True)
+            plc.write_area(snap7.types.areas.MK, 0, 0, data)
+            
+            print(f"\n >>> [LOGO! PLC] Activando pulso para Casilla #{numero_casilla} <<<")
+            
+            # Damos un breve retardo para que el PLC registre el flanco de subida
+            time.sleep(0.5)
+            
+            # 2. Desactivamos la marca (Pulso OFF) para dejar que el temporizador del LOGO! 
+            # maneje el tiempo de apertura de la cerradura de forma autónoma.
+            set_bit(data, 0, bit_index, False)
+            plc.write_area(snap7.types.areas.MK, 0, 0, data)
+            
+            plc.disconnect()
+            print(f" >>> [LOGO! PLC] Señal enviada con éxito para Casilla #{numero_casilla}. <<-\n")
+        else:
+            print("❌ No se pudo conectar al PLC LOGO!")
+    except Exception as e:
+        print(f"❌ Error de comunicación con el LOGO!: {e}")
 
 # 1. Banco de Casilleros de ENVÍO (4 casillas: 1, 2, 3, 4)
 casilleros_envio = {
@@ -36,7 +75,6 @@ HTML_INICIO = """
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <!-- AUTO-REFRESCO CADA 4 SEGUNDOS EN LA PANTALLA PRINCIPAL -->
     <meta http-equiv="refresh" content="4">
     <title>Q'epiBox - Estación de Encomiendas</title>
     <style>
@@ -520,7 +558,7 @@ HTML_CASILLERO_PC = """
         <div class="casilla-box">
             <div>CASILLA DE ENVÍO ASIGNADA</div>
             <div class="casilla-num">PUERTA #{{ casilla }}</div>
-            <div style="font-size: 12px; color: #ffd54f;">[ Modbus RTU / RS-485: Solenoide Q0.{{ casilla }} activado ]</div>
+            <div style="font-size: 12px; color: #ffd54f;">[ LOGO! PLC: Marca M0.{{ casilla - 1 }} activada ]</div>
         </div>
 
         <div class="guia-box">
@@ -703,7 +741,6 @@ def pantalla_qr():
     if not datos:
         return redirect("/")
 
-    # Detecta automáticamente el dominio web actual (Render o red local)
     qr_url = f"https://{request.host}/movil/pago?order_id={order_id}"
     
     return render_template_string(HTML_QR_PAGO, 
@@ -738,8 +775,10 @@ def movil_procesar_accion():
     if accion == "pagar":
         encomiendas_db[order_id]["pagado"] = True
         casilla_E = encomiendas_db[order_id]['casilla_envio']
-        print(f"\n >>> [Q'EPIBOX] PAGO MÓVIL CONFIRMADO. Orden: {order_id} <<<")
-        print(f" >>> [PLC MODBUS] Abriendo Casilla de ENVÍO #{casilla_E} para depósito del cliente <<-\n")
+        
+        # --- LLAMADA AL LOGO! PARA ABRIR CASILLA DE ENVÍO ---
+        activar_salida_logo(casilla_E)
+        
         return render_template_string(HTML_MOVIL_MENSAJE, titulo="¡Pago Exitoso!", mensaje="Transacción aprobada. Revise la pantalla de la PC.")
     else:
         print(f"\n >>> [Q'EPIBOX] Pago cancelado desde el móvil para la orden: {order_id} <<<")
@@ -800,8 +839,8 @@ def procesar_recojo():
         casilleros_recojo[casilla_R]["libre"] = True
         casilleros_recojo[casilla_R]["order_id"] = None
 
-    print(f"\n >>> [Q'EPIBOX RECOJO] Destinatario retiró paquete. Guía: {guia_ingresada} <<<")
-    print(f" >>> [PLC MODBUS] Abriendo Casilla de RECOJO #{casilla_R}. Casillero liberado. <<<\n")
+    # --- LLAMADA AL LOGO! PARA ABRIR CASILLA DE RECOJO ---
+    activar_salida_logo(casilla_R)
 
     return render_template_string(HTML_EXITO_RECOJO, casilla=casilla_R)
 
@@ -873,8 +912,8 @@ def guardar_en_recojo():
         encomiendas_db[order_id]["en_recojo"] = True
         encomiendas_db[order_id]["casilla_recojo"] = casilla_recojo_num
 
-        print(f"\n >>> [OPERARIO Q'EPIBOX] Paquete movido a Casilla de Recojo #{casilla_recojo_num} <<<")
-        print(f" >>> [PLC MODBUS] Activando solenoide de recojo #{casilla_recojo_num} para ingreso físico <<-\n")
+        # --- LLAMADA AL LOGO! PARA ABRIR CASILLA DE RECOJO (OPERARIO) ---
+        activar_salida_logo(casilla_recojo_num)
 
     return redirect(url_for("operario_panel", filtro_destino=filtro_destino))
 
